@@ -120,12 +120,15 @@ class Dataset(object):
         self.image_id += 1
 
     def show_image(self, image=0):
-        """ Show the last image
+        """ Plot an image
 
         :param image: This parameter is used to determine which image is going
                       to be displayed:
+
                         a. 0 --> Show the last image
+
                         b. 1 --> Show the first image
+
         :type image: Integer
 
         """
@@ -133,17 +136,12 @@ class Dataset(object):
             cv2.imshow(self.cv_window_name, self.image_2)
         else:
             cv2.imshow(self.cv_window_name, self.image_1)
-        self.keystroke = cv2.waitKey(0)
-        # If we pressed the q key, shut down
-        if self.keystroke != 1:
-            try:
-                cc = chr(self.keystroke & 255).lower()
-                if cc == 'q':
-                    self.cleanup()
-                elif cc == 'n':
-                    self.acquire()
-            except:
-                pass
+        self.keystroke = cv2.waitKey(0) & 0XFF
+        if self.keystroke == 27:
+            cv2.DestroyAllWindows()
+        elif self.keystroke == ord('s'):
+            cv2.imwrite('Image.png', self.image_2)
+            cv2.DestroyAllWindows()
 
     def copy_image(self):
         """ Copy the new image to the previous image
