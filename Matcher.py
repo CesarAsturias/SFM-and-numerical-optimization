@@ -57,15 +57,6 @@ class Matcher(object):
            The norm to be used if the brute force matcher is used. Can be
            *L2* norm, if not using *ORB* detector or *Hamming* otherwise.
 
-        .. data:: is_minkp
-
-           Boolean. If True, the matching method have found at least one keypoint in
-           both images.
-
-        .. data:: minmatches
-
-           Boolean. If True, there is at least one match between the keypoints.
-
         .. data:: kp1
 
            List of KeyPoints objects found by the detector in the first image.
@@ -208,7 +199,7 @@ class Matcher(object):
     def __init__(self, parameters):
         # Initiate detector and matcher
         if parameters['detector'] == 'orb':
-            self.detector = cv2.ORB_create(400)
+            self.detector = cv2.ORB_create(1000)
             self.norm = cv2.NORM_HAMMING
         elif parameters['detector'] == 'surf':
             self.detector = cv2.xfeatures2d.SURF_create(800)

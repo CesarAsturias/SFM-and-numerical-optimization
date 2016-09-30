@@ -1,54 +1,238 @@
 import numpy as np
 import cv2
-import threading
-from multiprocessing import Process, Queue
 from scipy import linalg
 from scipy import optimize
 from math import cos, sin, exp
+import os
+from Matcher import Matcher
+from dataset import Dataset
+from Camera import Camera
 
-# @file VisualOdometry.py
-# @author Cesar
-# @version 1.0
-# Class VisualOdometry. This class contain the measured
-# odometry. Implements the calculus of the odometry based on two consecutive
-# images.
+"""
+.. codeauthor:: Cesar Gonzalez Gonzalez
+: file VisualOdometry.py
+
+"""
 
 
 class VisualOdometry(object):
-    def __init__(self):
+    """ The **VisualOdometry** class contains all the required methods to
+    recover the motion of the camera and the structure of the scene.
+
+    This class has as an attribute a Dataset class instance and a Matcher
+    class instance, in order to make its use easier. The algorithms implemented
+    here (most of all) follow those explained in the excellent book *Multiple
+    View Geometry*, written by R.Hartley and A.Zisserman (HZ_)
+
+    **Attributes**:
+
+        .. data:: F
+
+           The estimated Fundamental_  matrix. Numpy ndarray (3x3).
+
+        .. data:: E
+
+           The estimated Essential_  matrix. Numpy ndarray (3x3).
+
+        .. data:: H
+
+           The estimated planar Homography_ matrix. Numpy ndarray(3x3)
+
+        .. data:: right_e
+
+           Right Epipole
+
+        .. data:: left_e
+
+           Left epipole
+
+        .. data:: cam
+
+           The Camera instance.
+
+           .. seealso::
+
+               Class :py:mod:`Camera`
+
+        .. data:: structure
+
+           List of 3D triangulated 3D points (Numpy arrays)
+
+        .. data:: mask
+
+           Numpy array. Every element of this array which is zero is suposed
+           to be an outlier. These attribute is used by the
+           *FindFundamentalRansac* and *FindEssentialRansac* methods, and
+           can be used to reject the KeyPoints outliers that remains after
+           the filtering process.
+
+    **Constructor**:
+
+        The constructor has two optional parameters:
+
+            1. The path to the dataset. If no path is provided, the
+               current path will be used.
+
+            2. The Matcher parameters. If no parameters are provided, the
+               system will use ORB as detector and a Brute-Force based matcher.
+
+               .. seealso::
+
+                   Class :py:mod:`Matcher`
+
+    .. _HZ: http://www.robots.ox.ac.uk/~vgg/hzbook/
+    .. _Fundamental: https://en.wikipedia.org/wiki/Fundamental_matrix_(computer_vision)
+    .. _Essential: https://en.wikipedia.org/wiki/Essential_matrix
+    .. _Homography: https://en.wikipedia.org/wiki/Homography_(computer_vision)
+    .. _RANSAC: http://www.cs.columbia.edu/~belhumeur/courses/compPhoto/ransac.pdf
+    .. _findFundamentalMat: http://docs.opencv.org/3.0-beta/modules/calib3d/doc/camera_calibration_and_3d_reconstruction.html#findfundamentalmat
+
+
+    """
+    def __init__(self, params=None, path=None):
+        """ Constructor
+
+        """
+        if params is None:
+            params = dict(detector='orb',
+                          matcher='bf')
+        if path is None:
+            path = os.getcwd()
+        self.matcher = Matcher(params)
+        self.kitti = Dataset(path)
         self.F = None
-        self.inlier_points_new = None
-        self.inlier_points_prev = None
-        self.outlier_points_new = None
-        self.outlier_points_prev = None
         self.mask = None
         self.H = None
-        self.maskH = None
-        self.e = None  # epipole
-        self.cam1 = Camera(None)
-        self.cam2 = Camera(None)
-        self.correctedkpts1 = None
-        self.correctedkpts2 = None  # Feature locations corrected by the optimal
-        # triangulation algorithm. This are the estimated features in the Gold
-        # Standard algorithm for estimating F (H&Z page 285)
-        self.K = np.array([[7.18856e+02, 0.0, 6.071928e+02],
-                          [0.0, 7.18856e+02, 1.852157e+02],
-                          [0.0, 0.0, 1.0]])  # Calibration matrix
-        self.height = 1.65  # Height of the cameras in meters
+        self.right_e = None
+        self.left_e = None
+        self.cam = Camera()
         self.E = None  # Essential matrix
-        self.maskE = None  # Mask for the essential matrix
 
-        self.structure = None  # List  of 3D points (triangulated)
+    def FindFundamentalRansac(self, kpts1, kpts2, method=cv2.FM_RANSAC, tol=1):
+        """ Computes the Fundamental matrix from two set of KeyPoints, using
+        a RANSAC_ scheme.
 
-    def FindFundamentalRansac(self, kpts1, kpts2):
-        # Compute Fundamental matrix from a set of corresponding keypoints,
-        # within a RANSAC scheme
-        # @param kpts1: list of keypoints of the previous frame
-        # @param kpts2: list of keypoints of the current frame
+        This method calls the OpenCV findFundamentalMat_ function.
 
+
+        :param kpts1: KeyPoints from the previous frame
+        :param kpts2: KeyPoints from the current frame
+
+        :param method: Method used by the OpenCV function to compute the
+                       Fundamental matrix. It can take the following values:
+
+                           * SEVEN_POINT, 7-Point algorithm
+                           * EIGHT_POINT, 8-Point algorithm
+                           * RANSAC, 8-Point or 7-Point (depending on the number
+                             of points provided) algorithm within a RANSAC
+                             scheme
+                           * LMEDS, Least Median Squares algorithm
+
+                     For more information about these algorithms see HZ_.
+
+        :param tol: Pixel tolerance used by the RANSAC algorithm. By default 1.
+        :type kpts1: Numpy ndarray nx2 (n is the number of KeyPoints)
+        :type kpts2: Numpy ndarray nx2 (n is the number of KeyPoints)
+        :type method: String
+        :type tol: Integer
+
+        :returns: The estimated Fundamental matrix (3x3) and an output array of
+                  the same length as the input KeyPoints. Every element of this
+                  array which is set to zero means that it is an **outlier**.
+        :rtype: Numpy ndarray
+
+        """
+        algorithms = dict(SEVEN_POINT=cv2.FM_7POINT,
+                          EIGHT_POINT=cv2.FM_8POINT,
+                          RANSAC=cv2.FM_RANSAC,
+                          LMEDS=cv2.FM_LMEDS)
         kpts1 = np.float32(kpts1)
         kpts2 = np.float32(kpts2)
-        self.F, self.mask = cv2.findFundamentalMat(kpts1, kpts2, cv2.FM_RANSAC)
+        if method == 'RANSAC':
+            try:
+                self.F, self.mask = cv2.findFundamentalMat(kpts1,
+                                                           kpts2,
+                                                           algorithms[method],
+                                                           tol)
+                return self.F
+            except Exception, e:
+                print e
+        else:
+            try:
+                self.F, self.mask = cv2.findFundamentalMat(kpts1,
+                                                           kpts2,
+                                                           algorithms[method])
+                return self.F
+            except Exception, e:
+                print e
+
+    def reject_outliers(self):
+        """ Rejects the KeyPoints outliers.
+
+        This method removes those KeyPoints marked as outliers by the mask
+        returned by the *FindEssentialRansac* and *FindFundamentalRansac*
+        methods.
+
+        """
+        if self.mask is None:
+            pass
+        else:
+            msk_lst = self.mask.tolist()
+            self.matcher.good_kp1 = [d for d, s in zip(self.matcher.good_kp1,
+                                                       msk_lst) if s[0] == 1]
+            self.matcher.good_kp2 = [d for d, s in zip(self.matcher.good_kp2,
+                                                       msk_lst) if s[0] == 1]
+            self.matcher.good_matches = [d for d, s in zip(self.matcher.good_matches,
+                                                           msk_lst) if s[0] == 1]
+
+    def draw_epilines(self, img1, img2, lines, pts1, pts2):
+        """ Draw epilines in img1 for the points in img2 and viceversa
+
+        :param img1: First image
+        :param img2: Second image
+        :param lines: Corresponding epilines
+        :param pts1: KeyPoints in the first image (Integer values)
+        :param pts2: KeyPoints in the second image (Integer values)
+        :type img1: Numpy ndarray
+        :type img2: Numpy ndarray
+        :type lines: Numpy ndarray
+        :type pts1: Numpy ndarray
+        :type pts2: Numpy ndarray
+
+        :returns: Two new images
+        :rtype: Numpy ndarray
+
+
+        """
+        r, c, p = img1.shape
+        # The next two lines don't work because the Kitti images
+        # don't have color, so we can't convert them to BGR
+        # img1 = cv2.cvtColor(img1, cv2.COLOR_GRAY2BGR)
+        # img2 = cv2.cvtColor(img2, cv2.COLOR_GRAY2BGR)
+        for r, pt1, pt2 in zip(lines, pts1, pts2):
+            color = tuple(np.random.randint(0, 255, 3).tolist())
+            x0, y0 = map(int, [0, -r[2]/r[1]])
+            x1, y1 = map(int, [c, -(r[2]+r[0]*c)/r[1]])
+            img1 = cv2.line(img1, (x0, y0), (x1, y1), color, 1)
+            img1 = cv2.circle(img1, tuple(pt1.astype(int)), 5, color, -1)
+            img2 = cv2.circle(img2, tuple(pt2.astype(int)), 5, color, -1)
+        return img1, img2
+
+    def find_epilines(self, pts):
+        """ Find epilines corresponding to points in an image (where we have
+        extracted *pts*) ready to plot in the other image.
+
+        :param pts: KeyPoints of the image for which we are drawing its
+                    epilines in the other image.
+        :type pts: Numpy ndarray
+        :returns: The epilines
+        :rtype: Numpy ndarray
+        """
+        lines = cv2.computeCorrespondEpilines(pts.reshape(-1, 1, 2),
+                                              2,
+                                              self.F)
+        lines = lines.reshape(-1, 3)
+        return lines
 
     def FindEssentialRansac(self, kpts1, kpts2):
         # Compute Essential matrix from a set of corresponding points
@@ -75,65 +259,6 @@ class VisualOdometry(object):
                                                   cv2.RANSAC, 0.999, 1.0,
                                                   self.maskE)
 
-    def FindFundamentalRansacPro(self, queue):
-        # Compute Fundamental matrix from a set of corresponding keypoints,
-        # within a RANSAC scheme
-        # @param kpts1: list of keypoints of the previous frame
-        # @param kpts2: list of keypoints of the current frame
-
-        temp = queue.get()
-        kpts1 = temp[0]
-        kpts2 = temp[1]
-        F = temp[2]
-
-        F, mask = cv2.findFundamentalMat(kpts1, kpts2, cv2.FM_RANSAC)
-        res = [F, mask]
-        queue.put(res)
-
-    def EstimateF_multiprocessing(self, kpts1, kpts2):
-        # Estimate F using the multiprocessing module
-        # @param kpts1: list of keypoints of the previous (first) frame
-        # @param kpts2: list of keypoints of the current frame
-        # @return kpts1, kpts2: Inliers
-
-        kpts1 = np.float32(kpts1)
-        kpts2 = np.float32(kpts2)
-
-        data_queued = [kpts1, kpts2, self.F]
-        q = Queue()
-        q.put(data_queued)
-        # Compute F in a parallel process:
-
-        p = Process(target=self.FindFundamentalRansacPro,
-                    args=(q, ))
-        p.start()
-        # We must wait until the process has finished because then the queue
-        # will be filled with the result. Otherwise, we can't use the get method
-        # (FIFO model of queue)
-
-        p.join()
-        res = q.get()
-        self.F = res[0]
-        self.mask = res[1]
-
-        # Select only inlier points
-
-        self.outlier_points_new = [kpts1[self.mask.ravel() == 0]]
-
-        self.outlier_points_prev = [kpts2[self.mask.ravel() == 0]]
-
-        self.outlier_points_new = np.float32(self.outlier_points_new[0])
-
-        self.outlier_points_prev = np.float32(self.outlier_points_prev[0])
-
-        return [kpts1[self.mask.ravel() == 1],
-                kpts2[self.mask.ravel() == 1]]
-
-    def EstimateF_multithreading(self, kpts1, kpts2):
-        t = threading.Thread(target=self.FindFundamentalRansac,
-                             args=(kpts2, kpts1, ))
-        t.start()
-
     def FindHomographyRansac(self, kpts1, kpts2):
         # Find the homography between two images given corresponding points
         kpts1 = np.float32(kpts1)
@@ -141,21 +266,68 @@ class VisualOdometry(object):
 
         self.H, self.maskH = cv2.findHomography(kpts1, kpts2, cv2.RANSAC, 1.0)
 
-    def get_epipole(self, F):
-        # Return the (right) epipole from a fundamental matrix F.
-        # Use with F.T for left epipole
-        # @param F: Fundamental Matrix (numpy 3x3 array)
+    def get_epipole(self, F=None):
+        """ Computes the **right** epipole (:math:`\\mathbf{e}`). As it is the
+        right null-vector of F, it satisfies
 
-        # Null space of F (Fx = 0)
+        .. math::
 
+            F\\mathbf{e} = \\mathbf{0}
+
+        If we want to compute the **left** epipole (:math:`\\mathbf{e'}`), then
+        pass :math:`F^{t}`, because it is the left null-vector of F:
+
+        .. math::
+
+            F^{t}\\mathbf{e'} = \\mathbf{0}
+
+
+        :param F: Fundamental associated with the required epipoles. If None,
+                  (by default) then it uses the class *F* attribute.
+        :type F: Numpy 3x3 ndarray
+        :returns: The right epipole associated with F
+        :rtype: Numpy 1x3 ndarray
+
+        """
         U, S, V = linalg.svd(F)
-        self.e = V[-1]
-        self.e = self.e / self.e[2]
+        e = V[-1]
+        e = e / e[2]
+        return e
 
     def skew(self, a):
-        # Return the matrix A such that a x v = Av for any v
-        # @param a: numpy vector
+        """ Return the matrix :math:`A` such that :math:`\\mathbf{a}` is its
+        null-vector (right or left), i.e, its a 3x3 *skew-symmetric matrix*:
 
+        .. math::
+
+            A\\mathbf{a} = \\mathbf{0}
+
+        and
+
+        .. math::
+
+            A^{t}\\mathbf{a} = \\mathbf{0}
+
+        Its form is:
+
+            ::
+
+                    [0  -a3  a2]
+                A = [a3  0  -a1]
+                    [-a2 a1   0]
+
+        :param a: Vector
+
+        .. math::
+
+            \left(\\begin{matrix} a_1 & a_2 & a_3 \\end{matrix}\\right)^t
+
+        :type a: Numpy 1x3 ndarray
+        :returns: The 3x3 skew-symmetric matrix associated with
+                  :math:`\\mathbf{a}`.
+        :rtype: Numpy 3x3 ndarray
+
+        """
         return np.array([[0, -a[2], a[1]], [a[2], 0, -a[0]], [-a[1], a[0], 0]])
 
     def P_from_F(self, F):
@@ -469,11 +641,35 @@ class VisualOdometry(object):
         return self.structure
 
     def E_from_F(self):
-        #
-        # Get the essential matrix from the fundamental
-        print np.shape(self.K.transpose())
-        print np.shape(self.F)
+        """ This method computes the Essential matrix from the Fundamental
+        matrix.
+
+        The equation is the following:
+
+        .. math::
+
+            E = K^{t}FK
+
+        where :math:`K` is the camera calibration matrix, a 3x3 matrix that
+        contains the intrinsic parameters of the camera:
+
+        ::
+
+                    [f    px]
+            K  =    [  f  py]
+                    [     1 ]
+
+
+        For a detailed discussion about these topics see HZ_ chapters 6 and 9.
+
+        .. _HZ: http://www.robots.ox.ac.uk/~vgg/hzbook/
+
+        :returns: The estimated Essential matrix E
+        :rtype: Numpy ndarray (3x3)
+
+        """
         self.E = self.K.transpose().dot(self.F).dot(self.K)
+        return self.E
 
     def get_pose(self, curr_kpts, prev_kpts, focal, pp):
         # Recover the rotation matrix and the translation vector from the
@@ -535,42 +731,3 @@ class VisualOdometry(object):
         scale = scene[1][best_idx] * cos(pitch) - \
                 scene[2][best_idx] * sin(pitch)
         return scale
-
-
-class Camera(object):
-
-    def __init__(self, P):
-        self.P = P
-        self.K = np.array([[7.18856e+02, 0.0, 6.071928e+02],
-                          [0.0, 7.18856e+02, 1.852157e+02],
-                          [0.0, 0.0, 1.0]])
-        self.pp = np.array([self.K[0, 2], self.K[1, 2]])
-        self.focal = self.K[0, 0]
-        self.R = None
-        self.t = None
-        self.c = None  # Camera center
-
-    def project(self, X):
-
-        x = np.dot(self.P, X)
-
-        for i in range(3):
-
-            x[i] /= x[2]
-
-        return x
-
-    def set_P(self, P):
-        # Set camera matrix
-        self.P = P
-
-    def set_K(self, K):
-
-        self.K = K
-
-    def compute_P(self, R, t):
-        # Compute the camera matrix given the extrinsic parameters R and t
-        # @param R: Rotation matrix
-        # @param t: translation vector
-        pose = np.column_stack((R, t))
-        self.P = np.dot(self.K, pose)
