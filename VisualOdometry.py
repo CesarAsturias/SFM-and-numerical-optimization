@@ -52,7 +52,7 @@ class VisualOdometry(object):
 
            .. seealso::
 
-               Class :py:mod:`Camera`
+               Class :py:class:`Camera.Camera`
 
         .. data:: structure
 
@@ -65,6 +65,37 @@ class VisualOdometry(object):
            *FindFundamentalRansac* and *FindEssentialRansac* methods, and
            can be used to reject the KeyPoints outliers that remains after
            the filtering process.
+
+        .. data:: index
+
+           This parameter count the number of iterations already done by the
+           system. **Whenever we iterate over the dataset (i.e, read a new image
+           and recover the structure, etc) we have to increase by two this
+           parameter, so we can index correctly the camera matrices**. For example,
+           at the beginning it will be 0, so the first camera will be stored
+           in the first position of the list of cameras, and the second one in
+           the second position (0 + 1). Next, we read a new image (so the new
+           one will be in the *image_2* attribute of the Dataset instance, and
+           the last one will be stored in the *image_1* attribute), and increase
+           the index by two, so now the *previous frame* camera matrix will be
+           stored in the third position (2) and the *current frame* in the
+           fourth position (4), and so on.
+
+        .. data:: kitti
+
+           Instance of the Dataset class.
+
+           .. seealso::
+
+               :py:mod:`Dataset`
+
+        .. data:: matcher
+
+           Instance of the matcher class
+
+           .. seealso::
+
+               :py:mod:`Matcher`
 
     **Constructor**:
 
@@ -86,6 +117,7 @@ class VisualOdometry(object):
     .. _Homography: https://en.wikipedia.org/wiki/Homography_(computer_vision)
     .. _RANSAC: http://www.cs.columbia.edu/~belhumeur/courses/compPhoto/ransac.pdf
     .. _findFundamentalMat: http://docs.opencv.org/3.0-beta/modules/calib3d/doc/camera_calibration_and_3d_reconstruction.html#findfundamentalmat
+    .. _Nister: http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.86.8769&rep=rep1&type=pdf
 
 
     """
@@ -107,6 +139,7 @@ class VisualOdometry(object):
         self.left_e = None
         self.cam = Camera()
         self.E = None  # Essential matrix
+        self.index = 0
 
     def FindFundamentalRansac(self, kpts1, kpts2, method=cv2.FM_RANSAC, tol=1):
         """ Computes the Fundamental matrix from two set of KeyPoints, using
@@ -282,8 +315,8 @@ class VisualOdometry(object):
             F^{t}\\mathbf{e'} = \\mathbf{0}
 
 
-        :param F: Fundamental associated with the required epipoles. If None,
-                  (by default) then it uses the class *F* attribute.
+        :param F: Fundamental matrix associated with the required epipoles.
+                  If None, (by default) then it uses the class *F* attribute.
         :type F: Numpy 3x3 ndarray
         :returns: The right epipole associated with F
         :rtype: Numpy 1x3 ndarray
@@ -316,6 +349,8 @@ class VisualOdometry(object):
                 A = [a3  0  -a1]
                     [-a2 a1   0]
 
+        This matrix is usually denoted as :math:`[\\mathbf{a}]_x`.
+
         :param a: Vector
 
         .. math::
@@ -330,22 +365,53 @@ class VisualOdometry(object):
         """
         return np.array([[0, -a[2], a[1]], [a[2], 0, -a[0]], [-a[1], a[0], 0]])
 
-    def P_from_F(self, F):
-        # Computes the second camera matrix (assuming P1 = [I 0] from a
-        # fundamental matrix.
-        # @param F: Numpy matrix (Fundamental)
+    def P_from_F(self, F=None):
+        """ Computes the second camera matrix (*current frame*) from the
+        Fundamental matrix. Assuming the canonical form of camera matrices, i.e,
+        the first matrix is of the simple form :math:`[I|\\mathbf{0}]`, where
+        :math:`I` is the 3x3 identity matrix and :math:`\\mathbf{0}` a null
+        3-vector, the second camera matrix :math:`P'` can be computed as
+        follows:
 
-        F = self.F.T
+        .. math::
 
-        self.get_epipole(F)  # Left epipole
+            P' = [[\\mathbf{e'}]_x F|\\mathbf{e'}]
 
-        Te = self.skew(self.e)
-        self.cam2.set_P(np.vstack((np.dot(Te, F.T).T, self.e)).T)
+        Recall that we can only recover the camera matrix :math:`P'` up to a
+        projective transformation. This means that the mapping between the
+        Fundamental matrix :math:`F` and the pair of camera matrices :math:`P`,
+        :math:`P'` **is not injective (one-to-one)**. See HZ_ chapter 9 for more
+        information about this.
+
+        :param F: Fundamental matrix. If None, then use the internal F
+                  parameter.
+        :type F: Numpy 3x3 ndarray
+
+        :returns: The computed second camera matrix :math:`P'`.
+        :rtype: Numpy 3x4 ndarray.
+
+
+        """
+        if F is None:
+            F = self.F
+        e = self.get_epipole(F.T)  # Left epipole
+
+        skew_e = self.skew(e)
+        return (np.vstack((np.dot(skew_e, F.T).T, e)).T)
 
     def create_P1(self):
-        # Initialize P1 = [I | 0]
+        """ Create a camera matrix of the form:
 
-        self.cam1.set_P(np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]]))
+            ::
+
+                    [1  0  0  0]
+                P = [0  1  0  0]
+                    [0  0  1  0]
+
+        :returns: Camera matrix with no rotation and no translation components.
+        :rtype: Numpy 3x4 ndarray
+        """
+        return (np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]]))
 
     def optimal_triangulation(self, kpts1, kpts2):
         # For each given point corresondence points1[i] <-> points2[i], and a
@@ -668,10 +734,91 @@ class VisualOdometry(object):
         :rtype: Numpy ndarray (3x3)
 
         """
-        self.E = self.K.transpose().dot(self.F).dot(self.K)
+        self.E = self.cam.K.transpose().dot(self.F).dot(self.cam.K)
         return self.E
 
-    def get_pose(self, curr_kpts, prev_kpts, focal, pp):
+    def get_pose(self, E, pts1, pts2, camera_matrix):
+        """ Recover the rotation matrix :math:`R` and the translation
+        vector :math:`\\mathbf{t}` from the Essential matrix.
+
+        As Hartley and Zisserman states in their book, the camera pose can be
+        recovered from the Essential matrix up to scale. For a given Essential
+        matrix :math:`E`, and first camera matrix :math:`P=[I|\\mathbf{0}]`,
+        there are four possible solutions for the second camera matrix
+        :math:`P'` (see HZ_ section 9.6.2).
+
+        A reconstructed point :math:`\\mathbf{X}` will be in front of both
+        cameras in one of these four solutions only. Thus, testing with a single
+        point to determine if it is in front of both cameras is sufficient to
+        decide between the four different solutions for the camera :math:`P'`.
+
+        OpenCV 3 has an implementation of the Nister_ five point algorithm to
+        extract the pose from the Essential matrix and a set of corresponding
+        image points (KeyPoints). The algorithm follow these steps:
+
+            1. Extract the two possible solutions for the rotation matrix
+               :math:`R` and also the two solutions for the translation vector
+               :math:`\\mathbf{t}`, so we have the four possible solutions:
+
+               .. math::
+
+                   P_1 = [UWV^T|\\mathbf{t}]
+
+               .. math::
+
+                   P_2 = [UWV^T|-\\mathbf{t}]
+
+               .. math::
+
+                   P_3 = [UW^TV^T|\\mathbf{t}]
+
+               .. math::
+
+                   P_4 = [UW^TV^T|-\\mathbf{t}]
+
+
+              with :math:`R=UWV^T` or :math:`R=UW^TV^T` and :math:`\\mathbf{t}`
+              being the last column of :math:`U`.
+
+            2. For all the four possible solutions do:
+
+                2.1. Triangulate the set of corresponding
+                     KeyPoints and normalize them, i.e, divide all the
+                     vector elements by its fourth coordinate
+                     (we are working with **homogeneous**  coordinates here):
+
+                     .. math::
+
+                         for \\ every \\ 3D \\ triangulated \\ point \\ \\mathbf{X}_i:
+
+
+
+                         \\mathbf{X}_i = \\frac{\\mathbf{X}_i}{\\mathbf{X}_i^3}
+
+                3.1. Next, Nister uses a threshold distance to filter out far
+                     away points (i.e, points at infinity). Then, the algorithm
+                     filter those triangulated points that have the third
+                     coordinate (depth) less than zero and count the number of
+                     them that meet these constraints (the valid points)
+
+            4. The solution that have more valid triangulated points is the
+               true one.
+
+        :param E: Essential matrix, if None then used the internal one.
+        :param pts1: Points from the first image
+        :param pts2: Points from the second image
+        :param camera_matrix: Camera calibration matrix
+        :type E: Numpy 3x3 ndarray
+        :type pts1: Numpy nx2 ndarray
+        :type pts2: Numpy nx2 ndarray
+        :type camera_matrix: Numpy 3x3 ndarray
+
+        :returns: The rotation matrix :math:`R`, the translation vector and
+                  a mask vector with the points that have passed the cheirality
+                  check.
+        :rtype: Numpy ndarrays
+
+        """
         # Recover the rotation matrix and the translation vector from the
         # essential matrix E.
         # @param curr_kpts: Keypoints of the current frame (np.array float)

@@ -199,10 +199,10 @@ class Matcher(object):
     def __init__(self, parameters):
         # Initiate detector and matcher
         if parameters['detector'] == 'orb':
-            self.detector = cv2.ORB_create(1000)
+            self.detector = cv2.ORB_create(2000)
             self.norm = cv2.NORM_HAMMING
         elif parameters['detector'] == 'surf':
-            self.detector = cv2.xfeatures2d.SURF_create(800)
+            self.detector = cv2.xfeatures2d.SURF_create(2000)
             self.norm = cv2.NORM_L2
         elif parameters['detector'] == 'sift':
             self.detector = cv2.xfeatures2d.SIFT_create()
