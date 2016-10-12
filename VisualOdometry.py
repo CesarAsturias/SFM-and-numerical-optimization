@@ -11,8 +11,8 @@ from Camera import Camera
 """
 .. codeauthor:: Cesar Gonzalez Gonzalez
 : file VisualOdometry.py
-
 """
+
 
 
 class VisualOdometry(object):
@@ -48,7 +48,7 @@ class VisualOdometry(object):
 
         .. data:: cam
 
-           The Camera instance.
+           The Camera instance (**for the current frame**)
 
            .. seealso::
 
@@ -56,7 +56,7 @@ class VisualOdometry(object):
 
         .. data:: structure
 
-           List of 3D triangulated 3D points (Numpy arrays)
+           3D triangulated points (Numpy ndarray nx3)
 
         .. data:: mask
 
@@ -145,7 +145,10 @@ class VisualOdometry(object):
         """ Computes the Fundamental matrix from two set of KeyPoints, using
         a RANSAC_ scheme.
 
-        This method calls the OpenCV findFundamentalMat_ function.
+        This method calls the OpenCV findFundamentalMat_ function. Note that
+        in order to compute the movement from the previous frame to the current
+        one we have to invert the parameters *kpts1* (points in the previous
+        frame) and *kpts2* (points in the current frame).
 
 
         :param kpts1: KeyPoints from the previous frame
@@ -183,8 +186,8 @@ class VisualOdometry(object):
         kpts2 = np.float32(kpts2)
         if method == 'RANSAC':
             try:
-                self.F, self.mask = cv2.findFundamentalMat(kpts1,
-                                                           kpts2,
+                self.F, self.mask = cv2.findFundamentalMat(kpts2,
+                                                           kpts1,
                                                            algorithms[method],
                                                            tol)
                 return self.F
@@ -192,8 +195,8 @@ class VisualOdometry(object):
                 print e
         else:
             try:
-                self.F, self.mask = cv2.findFundamentalMat(kpts1,
-                                                           kpts2,
+                self.F, self.mask = cv2.findFundamentalMat(kpts2,
+                                                           kpts1,
                                                            algorithms[method])
                 return self.F
             except Exception, e:
@@ -411,9 +414,82 @@ class VisualOdometry(object):
         :returns: Camera matrix with no rotation and no translation components.
         :rtype: Numpy 3x4 ndarray
         """
-        return (np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]]))
+        P1 = (np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]]))
+        return P1.astype(float)
 
-    def optimal_triangulation(self, kpts1, kpts2):
+    def optimal_triangulation(self, kpts1, kpts2, P1=None, P2=None, F=None):
+        """This method computes the structure of the scene given the image
+        coordinates of a 3D point :math:`\\mathbf{X}` in two views and the
+        camera matrices of those views.
+
+        As Hartley and Zisserman said in their book (HZ_), *naive triangulation
+        by back-projecting rays from measured image points will fail, because
+        the rays will not intersect in general, due to errors in the measured
+        image coordinates*. In order to triangulate properly the image points
+        it is necessary to estimate a best solution for the point in
+        :math:`\\mathbb{R}^3`.
+
+        The method proposed in HZ_, which is **projective-invariant**, consists
+        in estimate a 3D point :math:`\\hat{\\mathbf{X}}` which exactly
+        satisfies the supplied camera geometry (i.e, the given camera matrices),
+        so it projects as
+
+        .. math::
+
+            \\hat{\\mathbf{x}} = P\\hat{\\mathbf{X}}
+
+        .. math::
+
+            \\hat{\\mathbf{x}}' = P'\\hat{\\mathbf{X}}
+
+        and the aim is to estimate :math:`\\hat{\\mathbf{X}}` from the image
+        measurements :math:`\\mathbf{x}` and :math:`\\mathbf{x}'`. The MLE,
+        under the assumption of Gaussian noise is given by the point
+        :math:`\\hat{\\mathbf{X}}` that minimizes the **reprojection error**
+
+        .. math::
+
+            \\epsilon(\\mathbf{x}, \\mathbf{x}') = d(\\mathbf{x},
+                                          \\hat{\\mathbf{x}})^2 + d(\\mathbf{x}'
+                                           ,\\hat{\\mathbf{x}}')^2
+
+        subject to
+
+        .. math::
+
+            \\hat{\\mathbf{x}}'^TF\\hat{\\mathbf{x}} = 0
+
+        where :math:`d(*,*)` is the Euclidean distance between the points.
+
+        .. image:: ../Images/triangulation.png
+
+        So, the proposed algorithm by Hartley and Zisserman in their book is
+        first to find the corrected image points :math:`\\hat{\\mathbf{x}}` and
+        :math:`\\hat{\\mathbf{x}}'` minimizing :math:`\\epsilon(\\mathbf{x},
+        \\mathbf{x}')` and then compute :math:`\\hat{\\mathbf{X}}'` using the
+        DLT triangulation method (see HZ_ chapter 12).
+
+        :param kpts1: Measured image points in the first image,
+                      :math:`\\mathbf{x}`.
+        :param kpts2: Measured image points in the second image,
+                      :math:`\\mathbf{x}'`.
+        :param P1: First camera, :math:`P`.
+        :param P2: Second camera, :math:`P'`.
+        :param F: Fundamental matrix.
+        :type kpts1: Numpy nx2 ndarray
+        :type kpts2: Numpy nx2 ndarray
+        :type P1: Numpy 3x4 ndarray
+        :type P2: Numpy 3x4 ndarray
+        :type F: Numpy 3x3 ndarray
+
+        :returns: The two view scene structure :math:`\\hat{\\mathbf{X}}` and
+                  the corrected image points :math:`\\hat{\\mathbf{x}}` and
+                  :math:`\\hat{\\mathbf{x}}'`.
+        :rtype: * :math:`\\hat{\\mathbf{X}}` :math:`\\rightarrow`  Numpy nx3 ndarray
+                * :math:`\\hat{\\mathbf{x}}` and :math:`\\hat{\\mathbf{x}}'`
+                  :math:`\\rightarrow` Numpy nx2 ndarray.
+
+        """
         # For each given point corresondence points1[i] <-> points2[i], and a
         # fundamental matrix F, computes the corrected correspondences
         # new_points1[i] <-> new_points2[i] that minimize the geometric error
@@ -533,21 +609,50 @@ class VisualOdometry(object):
         return np.array(X).T
 
     def make_homog(self, points):
-        # Convert to homogeneous coordinates
+        """ Convert points to homogeneus form.
+
+        This method appends one row (fill of ones) to the passed matrix.
+
+        :param points: Matrix of points (2D or 3D) in column form, i.e,
+                       the shape of the matrix must be (2 or 3, n), where
+                       n is the number of points.
+        :type points: Numpy ndarray
+
+        """
         return np.vstack((points, np.ones((1, points.shape[1]))))
 
-    def triangulate(self, kpts1, kpts2):
+    def triangulate(self, kpts1, kpts2, F=None):
+        """ Triangulate 3D points from image points in two views.
 
+        This is the linear triangulation method, which is not an optimal method.
+        See chapter 12 of HZ_ for more details.
+
+        The method normalize the calculated 3D points :math:`\\mathbf{X}`
+        internally.
+
+        :param kpts1: Image points for the first frame, :math:`\\mathbf{x}`
+        :param kpts2: Image points for the second frame, :math:`\\mathbf{x}'`
+        :param F: Fundamental matrix
+        :type kpts1: Numpy nx2 ndarray
+        :type kpts2: Numpy nx2 ndarray
+        :type F: Numpy 3x3 ndarray
+
+        :returns: Triangulated 3D points, :math:`\\mathbf{X}` (homogeneous)
+        :rtype: Numpy nx4 ndarray
+
+        """
+        if np.shape(kpts1)[1] != 2:
+            raise ValueError("The dimensions of the input image points must \
+                              be (2, n), where n is the number of points")
         kpts1 = (np.reshape(kpts1, (len(kpts1), 2))).T
         kpts2 = (np.reshape(kpts2, (len(kpts2), 2))).T
-
-        points3D = None
-
-        points3D = cv2.triangulatePoints(self.cam1.P, self.cam2.P, kpts1, kpts2)
-
+        if F is None:
+            F = self.F
+        P1 = self.create_P1()
+        P2 = self.P_from_F()
+        points3D = cv2.triangulatePoints(P1, P2, kpts1, kpts2)
         points3D = points3D / points3D[3]
-
-        return points3D
+        return points3D.T
 
     def convert_from_homogeneous(self, kpts):
         # Convert homogeneous points to euclidean points
@@ -611,100 +716,176 @@ class VisualOdometry(object):
 
         return a
 
-    def functiontominimize(self, params, x1, x2):
-        # This is the function that we will pass to the levenberg-marquardt
-        # algorithm. It extracts the camera matrix P' from the params vector
-        # (params[0:8]). Then, it triangulate the 3D points
-        # X_hat and obtain the estimated x and x'. Finally, it returns the
-        # reprojection error (not squared).
+    def func(self, params, x1, x2):
+        """ Computes the residuals for the Fundamental matrix two view
+        optimization problem.
 
-        # @param x1: inliers in the previous image, i.e, the measured points in
-        # the previous image --> 3 x n array
-        # @param x2: inliers in the second image
-        # @param params: the parameter vector to minimize. It contains the two
-        # projection matrices and the structure of the scene
-        # @return e_rep: reprojection error
+        This is an m-dimensional function of n variables (n is the number of
+        observations in the frames, the image points, and m in this case is
+        :math:`2n`) that returns the residuals between the measured image points
+        and the projections of  the reconstructed 3D points
+        :math:`\\hat{\\mathbf{X}}`: :math:`\\hat{\\mathbf{x}}`
+        and :math:`\\hat{\\mathbf{x}}'`.
 
-        if self.cam1 is None:
-            self.create_P1()
+        The method compute the projected points :math:`\\hat{\\mathbf{x}}` and
+        :math:`\\hat{\\mathbf{x}}'` from the two camera projection matrices,
+        :math:`P` (created using the
+        :py:mod:`VisualOdometry.VisualOdometry.create_P1` method)
+        and :math:`P'`, which is extracted from the parameters vector (the
+        first twelve elements).
 
-        # Obtain the second camera matrix from the params vector
-        P2 = None
+
+        :param params: Parameter vector :math:`\\mathbf{p}`, that contains the
+                       second camera parameters and the 3D structure.
+        :param x1: The first frame measured points :math:`\\mathbf{x}`
+        :param x2: The second frame measured points :math:`\\mathbf{x}'`
+        :type params: Numpy ndarray of shape :math:`k`, where :math:`k` is the
+                      sum of the second camera parameters and the 3D parameters.
+        :type x1: Numpy nx2 ndarray
+        :type x2: Numpy nx2 ndarray
+
+
+        """
+        P1 = self.create_P1()
         P2 = params[0:12].reshape(3, 4)
         p = params[12:len(params)]
-        l = np.shape(p)
-        # Obtain the structure matrix from param vector
-        X = np.reshape(p, (3, l[0] / 3))
+        l = p.shape
+        X = np.reshape(p, (l[0] / 3, 3)).T # 3xn matrix
         # Make homogeneous
         X = self.make_homog(X)
+        # Project the structure
+        x1_est = np.dot(P1, X)
+        x1_est = x1_est / x1_est[2]
+        x1_est = x1_est[:2, :]
+        x2_est = np.dot(P2, X)
+        x2_est = x2_est / x2_est[2]
+        x2_est = x2_est[:2, :]
 
-        # Project the structure to both images and find residual:
-        self.cam2.set_P(P2)
-
-        x1_est = None
-        x2_est = None
-
-        x1_est = self.cam1.project(X)  # The estimated projections
-        x2_est = self.cam2.project(X)  # 3 x n
-
-        error_image1 = self.residual(x1, x1_est).ravel()
-        error_image2 = self.residual(x2, x2_est).ravel()
+        error_image1 = self.residual(x1, x1_est.T).ravel()
+        error_image2 = self.residual(x2, x2_est.T).ravel()
         error = np.append(error_image1, error_image2)
-
         return error
 
     def residual(self, x1, x2):
-        # Reprojection error. This function compute the squared distance between
-        # all the correlated points in the x1 and x2 arrays, which are expected
-        # to be numpy arrays.
+        """Given two nx2 vectors :math:`\\mathbf{x}` and
+        :math:`\\hat{\\mathbf{x}}`, compute the difference between their
+        coordinates:
 
-        # @param x1: numpy nx2 array
-        # @param x2: numpy 3 x n  array
-        # @return squared euclidean distance
+        .. math::
 
-        # Since we x2 is a 3 x n array we have to proceed with a for loop.
-        # TODO: Make code for converting automaticaly the shape of the arrays
-        # tho the desired one. Perhaps, this could be done in the calling
-        # function
+            residual_i(\\mathbf{x}_i, \\hat{\\mathbf{x}}_i) = (x_i-\\hat{x}_i,
+            y_i-\\hat{y}_i)
 
-        a, b = np.shape(x2)
-        error = np.zeros((b, 1))
+        :param x1: :math:`\\mathbf{x}`
+        :param x2: :math:`\\hat{\\mathbf{x}}`
+        :type x1: Numpy nx2 ndarray
+        :type x2: Numpy nx2 ndarray
+        :returns: Residual vector :math:`\\mathbf{x} - \\hat{\\mathbf{x}}`
+        :rtype: Numpy nx2 ndarray
 
-        x2_temp = np.delete(x2, 2, 0).transpose()  # Delete last row
-        error = np.subtract(x1, x2_temp)  # subtract [x - x_prime, y - y_prime]
+        """
+        return x1-x2
 
-        return error  # numpy n  ndarray n x 2 (
+    def optimize_F(self, x1, x2, F=None, structure=None,
+                   method='lm', robust_cost_f='linear'):
+        """ Minimize the cost
 
-    def optimize_F(self, x1, x2):
-        # Wrapper for the optimize.leastsq function.
+        .. math::
 
-        # Transform camera matrix into vector:
-        vec_P2 = None
-        vec_P2 = np.hstack(self.cam2.P)
+            \\epsilon(\\mathbf{x}, \\mathbf{x}') = \\sum_i d(\\mathbf{x}_i,
+            \\hat{\\mathbf{x}}_i)^2 +
+            d(\\mathbf{x}_i', \\hat{\\mathbf{x}}_i')^2
 
+        over an initial estimate of :math:`\\hat{F}` and
+        :math:`\\hat{\\mathbf{X}}_i`, :math:`i=1,\\dots, n`
+
+        The cost is minimized using a nonlinear minimization algorithm over
+        :math:`3n+12` variables: :math:`3n` for the 3D points
+        :math:`\\hat{\\mathbf{X}}_i` and 12 for the camera matrix
+        :math:`P'=[M|\\mathbf{t}]`, with :math:`\\hat{F}=[\\mathbf{t}]_xM` and
+
+        .. math::
+
+            \\hat{\\mathbf{x}}_i = P\\mathbf{x}_i
+
+            \\hat{\\mathbf{x}}_i' = P'\\mathbf{x}_i'
+
+        The available algorithms are:
+
+            * **trf**: Trust Region Reflective algorithm, see :cite:`branch1999`
+            * **dogbox**: Modified Powell's Dogleg algorithm, see
+              :cite:`powell1970new` and :cite:`voglisrectangular`.
+            * **lm**: Levenberg-Marquardt algorithm, see
+              :cite:`more1978levenberg`.
+
+        In order to reduce the influence of outliers on the solution we can
+        modify the cost function :math:`\\epsilon(\\mathbf{x}, \\mathbf{x}')`
+        using the robust_cost_f argument:
+
+            * **linear**: Standard least-squares (no modification)
+            * **soft_l1**: Pseudo-Huber cost function:
+
+                .. math::
+
+                    C(\\epsilon) = 2\\sqrt{1*\\epsilon}-1
+
+            * **Huber**: Huber cost function:
+
+                .. math::
+
+                    C(\\epsilon) = \\epsilon \\ \\mathbf{if \\ \\epsilon\\leq 1}
+
+                    \\mathbf{else} \\ C(\\epsilon) = 2\\sqrt{\\epsilon}
+
+            * **Cauchy**: Cauchy cost function:
+
+                .. math::
+
+                    C(\\epsilon) = ln(1+\\epsilon)
+
+        .. warning::
+
+            If we are using the Levenberg-Marquardt algorithm the cost function
+            must be the **linear** one. Otherwise the algorithm will raise an
+            error.
+
+        :param x1: The previous frame measured image points, :math:`\\mathbf{x}`
+        :param x2: The current frame measured image points, :math:`\\mathbf{x}'`
+        :param F: Fundamental matrix. If None, then the internal attribute will
+                  be used.
+        :param structure: 3D scene structure, :math:`\\hat{\\mathbf{X}}`
+        :param method: Minimization algorithm to be used.
+        :param robust_cost_f: Robust cost function to be used.
+        :type x1: Numpy nx2 ndarray
+        :type x2: Numpy nx2 ndarray
+        :type F: Numpy 3x3 ndarray
+        :type structure: Numpy nx4 Numpy ndarray
+        :type method: String
+        :type robust_cost_f: String
+
+        :returns: The optimized Fundamental matrix and the scene structure, also
+                  optimized.
+
+        :rtype:
+
+                1. :math:`F`: Numpy 3x3 ndarray
+                2. :math:`\\mathbf{X}`: Numpy nx3 ndarray
+
+
+        """
+        if F is None:
+            F = self.F
+        vec_P2 = np.hstack(self.P_from_F())
         # Transform the structure (matrix 3 x n) to 1d vector
-        vec_str = None
-        vec_str = np.delete(self.structure, 3, 0)  # The ones aren't params
+        if structure is None:
+            structure = self.structure
+        vec_str = structure[:, :3]  # The ones aren't parameters
         vec_str = vec_str.reshape(-1)
-
         param = vec_P2
         param = np.append(param, vec_str)
-
-        # Pass them, and additional arguments to leastsq function.
-        # TODO: redefine error function and create params vector
-
-        param_opt, param_cov = optimize.leastsq(self.functiontominimize,
-                                                param, args=(x1, x2))
-
-        return param_opt, param_cov
-
-    def recover_structure(self, vector_param):
-        # Recover the structure matrix from the optimized vector of parameters
-        # @param vector_param: vector of optimized parameters
-        p = vector_param[12:len(vector_param)]
-        l = np.shape(p)
-        self.structure = np.reshape(p, (3, l[0] / 3))
-        return self.structure
+        solution = optimize.least_squares(self.func, param, method=method,
+                                          args=(x1, x2), loss=robust_cost_f)
+        return solution
 
     def E_from_F(self):
         """ This method computes the Essential matrix from the Fundamental
@@ -737,7 +918,7 @@ class VisualOdometry(object):
         self.E = self.cam.K.transpose().dot(self.F).dot(self.cam.K)
         return self.E
 
-    def get_pose(self, E, pts1, pts2, camera_matrix):
+    def get_pose(self, pts1, pts2, camera_matrix, E=None, inplace=True):
         """ Recover the rotation matrix :math:`R` and the translation
         vector :math:`\\mathbf{t}` from the Essential matrix.
 
@@ -804,10 +985,19 @@ class VisualOdometry(object):
             4. The solution that have more valid triangulated points is the
                true one.
 
+        .. note::
+
+                In order to compute the pose of the second frame with respect
+                to the first one we invert the order of the parameters *pts* and
+                *pts2* when passing them to the OpenCV method recoverPose.
+
         :param E: Essential matrix, if None then used the internal one.
         :param pts1: Points from the first image
         :param pts2: Points from the second image
         :param camera_matrix: Camera calibration matrix
+        :param inplace: If True, then fill the :math:`R` and :math:`\\mathbf{t}`
+                        vectors of the current camera. Also, compute the
+                        camera projection matrix :math:`P` **up to scale**.
         :type E: Numpy 3x3 ndarray
         :type pts1: Numpy nx2 ndarray
         :type pts2: Numpy nx2 ndarray
@@ -819,20 +1009,17 @@ class VisualOdometry(object):
         :rtype: Numpy ndarrays
 
         """
-        # Recover the rotation matrix and the translation vector from the
-        # essential matrix E.
-        # @param curr_kpts: Keypoints of the current frame (np.array float)
-        # @param prev_kpts: Keypoints of the previous frame
-        # @param focal: focal lenght of the camera
-        # @param pp: principal point of the camera
-        # @param mask: mask , it will store the mask with the points used to
-        # recover the pose. Use this mask to filter the 3D points to be used in
-        # following operations.
-        # @return R: Rotation matrix, to be calculated
-        # @return t: translation vector, to be calculated
-
-        points, R, t, mask = cv2.recoverPose(self.E, curr_kpts, prev_kpts,
-                                             focal, pp)
+        if E is None:
+            E = self.E
+        R = np.zeros([3, 3])
+        t = np.zeros([3, 1])
+        pp = tuple(camera_matrix[:2, 2])
+        f = camera_matrix[0, 0]
+        cv2.recoverPose(E, pts2, pts1, R, t, f, pp)
+        if inplace:
+            self.cam.set_R(R)
+            self.cam.set_t(t)
+            self.cam.set_P(self.cam.Rt2P(R, t, self.cam.K))
         return R, t
 
     def compute_scale(self, plane_model, scene):
@@ -878,3 +1065,8 @@ class VisualOdometry(object):
         scale = scene[1][best_idx] * cos(pitch) - \
                 scene[2][best_idx] * sin(pitch)
         return scale
+
+"""
+.. bibliography:: zreferences.bib
+    :all:
+"""

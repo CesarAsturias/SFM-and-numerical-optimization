@@ -215,4 +215,4 @@ class Camera(object):
         :return: The focal lenght :math:`f` of the camera
         :rtype: Float
         """
-        return self.K[0,0]
+        return self.K[0, 0]
