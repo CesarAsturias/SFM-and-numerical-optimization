@@ -1,6 +1,8 @@
 import sys
 import os
 import cv2
+import pandas as pd
+import numpy as np
 
 """
 .. codeauthor:: Cesar Gonzalez Gonzalez <cesargg.luarca@gmail.com>
@@ -38,7 +40,7 @@ class Dataset(object):
 
         .. data:: path
 
-           Path of the image dataset
+           Path to the image dataset
 
         .. data:: counter
 
@@ -51,6 +53,10 @@ class Dataset(object):
         .. data:: cv_window_name
 
            The name of the window used to display the images
+
+        .. data:: ground_truth
+
+           Ground truth coordinates for the image sequence. Numpy nx12 ndarray.
 
     **Constructor**:
 
@@ -190,6 +196,73 @@ class Dataset(object):
         roi = img[start[1, 0]:start[1, 0] + size[1, 0],
                   start[0, 0]: start[0, 0] + size[0, 0]]
         return roi
+
+    def read_ground_truth(self, filename):
+        """ Reads the ground truth poses :math:`T` of the image sequence.
+
+        The method reads a txt file which has the following shape:
+
+        .. math::
+
+            row_i = (R_{11},R_{12},R_{13},t_{x},R_{21},R_{22},R_{23},t_{y},
+                     R_{31},R_{32},R_{33},t_{z})
+
+        where :math:`T_i` is the i-th row of the file.
+
+        :param filename: The **absolute** path to the txt file.
+        :type filename: String
+        :returns: The ground truth poses as a numpy ndarray of shape
+                  (n, 3, 4), where :math:`n` is the number of rows (poses) and
+                  for each :math:`n` there is a 3x4 matrix:
+
+                  .. math::
+
+                        T_i = [R_i|\\mathbf{t}]
+
+        :rtype: Numpy ndarray
+
+        Example::
+
+            >>> from dataset import Dataset
+            >>> from mpl_toolkits.mplot3d import Axes3D
+            >>> import matplotlib.pyplot as plt
+            >>> kitti = Dataset('path_to_images')
+            >>> poses = kitti.read_ground_truth('path_to_poses')
+            >>> # Extract X, Y and Z coordinates
+            >>> X = poses[:, 0, 3]
+            >>> Y = poses[:, 1, 3]
+            >>> Z = poses[:, 2, 3]
+            >>> # Plot the 3D trajectory
+            >>> fig = plt.figure()
+            >>> ax = fig.add_subplot(111, projection='3d')
+            >>> ax.scatter(X, Y, Z)
+            >>> plt.xlabel('X')
+            >>> plt.ylabel('Y')
+            >>> plt.show()
+            >>> # Plot 2D trajectory
+            >>> fig_2d = plt.figure()
+            >>> plt.plot(X, Z)
+            >>> plt.show()
+
+        The above example will plot the following images:
+
+        .. image:: ../Images/traj_3d_truth.png
+
+        .. image:: ../Images/traj_2d_truth.png
+
+
+        """
+        names = ['R11', 'R12', 'R13', 'X',
+                 'R21', 'R22', 'R23', 'Y',
+                 'R31', 'R32', 'R33', 'Z']
+        poses = pd.read_csv(filename, header=None, names=names,
+                            delim_whitespace=True)
+        poses_array = poses.as_matrix()
+        lst = []
+        for i in range(len(poses_array)):
+            lst.append(poses_array[i].reshape((3, 4)))
+        poses_array = np.asarray(lst)
+        return poses_array
 
     def cleanup(self):
         """ Destroy all windows before exiting the application

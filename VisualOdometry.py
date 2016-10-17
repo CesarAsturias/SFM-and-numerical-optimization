@@ -490,20 +490,6 @@ class VisualOdometry(object):
                   :math:`\\rightarrow` Numpy nx2 ndarray.
 
         """
-        # For each given point corresondence points1[i] <-> points2[i], and a
-        # fundamental matrix F, computes the corrected correspondences
-        # new_points1[i] <-> new_points2[i] that minimize the geometric error
-        # d(points1[i], new_points1[i])^2 + d(points2[i], new_points2[i])^2,
-        # subject to the epipolar constraint new_points2^t * F * new_points1 = 0
-        # Here we are using the OpenCV's function CorrectMatches.
-
-        # @param kpts1 : keypoints in one image
-        # @param kpts2 : keypoints in the other image
-        # @return new_points1 : the optimized points1
-        # @return new_points2 : the optimized points2
-
-        # First, we have to reshape the keypoints. They must be a 1 x n x 2
-        # array.
 
         kpts1 = np.float32(kpts1)  # Points in the first camera
         kpts2 = np.float32(kpts2)  # Points in the second camera
@@ -621,11 +607,52 @@ class VisualOdometry(object):
         """
         return np.vstack((points, np.ones((1, points.shape[1]))))
 
-    def triangulate(self, kpts1, kpts2, F=None):
+    def triangulate(self, kpts1, kpts2, F=None, euclidean=False):
         """ Triangulate 3D points from image points in two views.
 
         This is the linear triangulation method, which is not an optimal method.
         See chapter 12 of HZ_ for more details.
+
+        If the *euclidean* parameter is True, then the method reconstructs the
+        scene up to a similarity transformation. In order to achieve this, it
+        computes internally the Essential matrix from the Fundamental one,
+        recover the Pose :math:`[R|\\mathbf{t}]` and form the camera projection
+        matrix :math:`P'` as
+
+        .. math::
+
+            P' = K[R|\\mathbf{t}]
+
+        The first camera matrix is also multiplied by the camera
+        calibration matrix:
+
+        .. math::
+
+            P = K[I|\\mathbf{0}]
+
+        Otherwise, the camera matrices are computed as:
+
+        .. math::
+
+            P' = [[\\mathbf{e'}]_xF|\\mathbf{e}']
+
+        .. math::
+
+            P = [I|\\mathbf{0}]
+
+        and the reconstruction is up to an arbitrary projective transformation.
+
+        .. note::
+
+            If we are performing a reconstruction up to a similarity
+            transformation we can filter out those points that don't pass the
+            cheirality check by removing the 3D points
+            :math:`\\mathbf{X}_i` for which the :math:`Z` coordinate is negative
+            (i.e, those points that are projected behind the camera).
+
+            If the reconstruction is up to a projective transformation then it's
+            possible that all the triangulated points are behind the camera, so
+            don't care about this.
 
         The method normalize the calculated 3D points :math:`\\mathbf{X}`
         internally.
@@ -633,9 +660,13 @@ class VisualOdometry(object):
         :param kpts1: Image points for the first frame, :math:`\\mathbf{x}`
         :param kpts2: Image points for the second frame, :math:`\\mathbf{x}'`
         :param F: Fundamental matrix
+        :param Euclidean: If True, reconstruct structure up to an Euclidean
+                          transformation (using the Essential matrix). Else,
+                          reconstruct up to a projective transformation.
         :type kpts1: Numpy nx2 ndarray
         :type kpts2: Numpy nx2 ndarray
         :type F: Numpy 3x3 ndarray
+        :type euclidean: Boolean
 
         :returns: Triangulated 3D points, :math:`\\mathbf{X}` (homogeneous)
         :rtype: Numpy nx4 ndarray
@@ -648,11 +679,47 @@ class VisualOdometry(object):
         kpts2 = (np.reshape(kpts2, (len(kpts2), 2))).T
         if F is None:
             F = self.F
-        P1 = self.create_P1()
-        P2 = self.P_from_F()
+        if euclidean:
+            E = self.E_from_F(F)
+            R, t = self.get_pose(kpts1.T, kpts2.T, self.cam.K, E)
+            P2 = self.cam.Rt2P(R, t, self.cam.K)
+            P1 = np.dot(self.cam.K, self.create_P1())
+        else:
+            P2 = self.P_from_F()
+            P1 = self.create_P1()
         points3D = cv2.triangulatePoints(P1, P2, kpts1, kpts2)
         points3D = points3D / points3D[3]
         return points3D.T
+
+    def filter_z(self, points):
+        """ Filter out those 3D points whose Z coordinate is negative and is
+        likely to be an outlier, based on the median absolute deviation (MAD).
+
+        The mask returned by the method can be used to filter the image points
+        in both images, :math:`\\mathbf{x}`  and :math:`\\mathbf{x}'`.
+
+        :param points: 3D points :math:`\\mathbf{X}`
+        :type points: Numpy nx4 ndarray
+
+        :returns: 1. 3D points filtered
+                  2. Filter mask (positive depth and no outliers)
+        :rtype: 1. Numpy nx4 ndarray
+                2. Numpy 1xn ndarray
+
+        """
+        if np.shape(points)[1] != 4:
+            raise ValueError('Shape of input array must be (n, 3)')
+        mask_pos = points[:, 2] >= 0
+        thresh = 3.5
+        Z = points[:, 2]
+        Z = Z[:, None]
+        median = np.median(Z, axis=0)
+        diff = np.sum((Z-median)**2, axis=1)
+        diff = np.sqrt(diff)
+        med_abs_deviation = np.median(diff)
+        modified_z_score = 0.6745 * diff / med_abs_deviation
+        mask = modified_z_score < thresh
+        return points[mask & mask_pos], mask & mask_pos
 
     def convert_from_homogeneous(self, kpts):
         # Convert homogeneous points to euclidean points
@@ -863,13 +930,15 @@ class VisualOdometry(object):
         :type method: String
         :type robust_cost_f: String
 
-        :returns: The optimized Fundamental matrix and the scene structure, also
-                  optimized.
+        :returns: 1. Instance of the scipy.optimize.OptimizeResult (contains
+                     all the information returned by the minimization algorithm)
+
+                  2. Optimized Fundamental matrix.
 
         :rtype:
 
                 1. :math:`F`: Numpy 3x3 ndarray
-                2. :math:`\\mathbf{X}`: Numpy nx3 ndarray
+                2. :py:mod:`scipy.optimize.OptimizeResult` instance.
 
 
         """
@@ -885,9 +954,13 @@ class VisualOdometry(object):
         param = np.append(param, vec_str)
         solution = optimize.least_squares(self.func, param, method=method,
                                           args=(x1, x2), loss=robust_cost_f)
-        return solution
+        P = solution.x[:12].reshape((3, 4))
+        M = P[:, :3]
+        t = P[:, 3]
+        F = np.dot(self.skew(t), M)
+        return solution, F
 
-    def E_from_F(self):
+    def E_from_F(self, F=None, K=None):
         """ This method computes the Essential matrix from the Fundamental
         matrix.
 
@@ -911,11 +984,20 @@ class VisualOdometry(object):
 
         .. _HZ: http://www.robots.ox.ac.uk/~vgg/hzbook/
 
+        :param F: Fundamental matrix. If None, use the internal attribute.
+        :type F: Numpy 3x3 ndarray
+        :param K: Camera calibration matrix
+        :type K: Numpy 3x3 ndarray
+
         :returns: The estimated Essential matrix E
         :rtype: Numpy ndarray (3x3)
 
         """
-        self.E = self.cam.K.transpose().dot(self.F).dot(self.cam.K)
+        if F is None:
+            F = self.F
+        if K is None:
+            K = self.cam.K
+        self.E = K.transpose().dot(F).dot(K)
         return self.E
 
     def get_pose(self, pts1, pts2, camera_matrix, E=None, inplace=True):

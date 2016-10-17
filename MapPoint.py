@@ -32,6 +32,9 @@ class MapPoint(object):
            in each frame. As the :py:class:`MapPoint.measured_2d_points`,
            this list is correlated with the connected_frames list.
 
+           Each entry of this list is a numpy 1xd ndarray, where :math:`d` is
+           the size of the descriptor (:math:`d=32` for ORB descriptors).
+
         .. data:: connected_frames
 
            List of camera index in which the point was observed.
