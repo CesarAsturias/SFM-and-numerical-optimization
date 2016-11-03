@@ -636,7 +636,7 @@ class Matcher(object):
         :param prev_points: The previous KeyPoints
         :type img_prev: Numpy ndarray
         :type img_curr: Numpy ndarray
-        :type prev_points: Numpy ndarray
+        :type prev_points: Numpy ndarray with shape nx2
 
         :returns: Three variables:
 
@@ -646,16 +646,23 @@ class Matcher(object):
                     2. A numpy ndarray (nx2) with the computed KeyPoints in the
                        first (previous) image.
 
-                    3. A numpy ndarray (mx2) with the computed KeyPoints in the
+                    3. A numpy ndarray (mx2) with the tracked KeyPoints in the
                        next image.
 
         :rtype: Numpy ndarray
 
+        .. note::
+
+            The :py:mod:`calcOpticalFlowPyrLK` takes as input points a numpy
+            ndarray with shape (n, 1, 2), and of type **numpy.float32**.
+
         """
         list_tracks = []
+        prev_points_r = prev_points.reshape(prev_points.shape[0], 1, 2)
+        prev_points_r = prev_points.astype(np.float32)
         curr_points, st, err = cv2.calcOpticalFlowPyrLK(img_prev,
                                                         img_curr,
-                                                        prev_points,
+                                                        prev_points_r,
                                                         None,
                                                         **self.lk_params)
 
@@ -671,4 +678,4 @@ class Matcher(object):
                 continue
             list_tracks.append((x, y))
 
-        return good, prev_points2, list_tracks
+        return good, prev_points2, np.asarray(list_tracks)

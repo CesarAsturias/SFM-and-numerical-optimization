@@ -216,8 +216,12 @@ class VisualOdometry(object):
             msk_lst = self.mask.tolist()
             self.matcher.good_kp1 = [d for d, s in zip(self.matcher.good_kp1,
                                                        msk_lst) if s[0] == 1]
+            self.matcher.good_desc1 = [d for d, s in zip(self.matcher.good_desc1,
+                                                         msk_lst) if s[0]==1]
             self.matcher.good_kp2 = [d for d, s in zip(self.matcher.good_kp2,
                                                        msk_lst) if s[0] == 1]
+            self.matcher.good_desc2 = [d for d, s in zip(self.matcher.good_desc2,
+                                                         msk_lst) if s[0]==1]
             self.matcher.good_matches = [d for d, s in zip(self.matcher.good_matches,
                                                            msk_lst) if s[0] == 1]
 

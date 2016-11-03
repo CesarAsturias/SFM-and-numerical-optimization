@@ -80,6 +80,14 @@ class Camera(object):
 
            **Type**: List of descriptors (numpy ndarrays)
 
+        .. data:: index
+
+           Index of the camera (Integer)
+
+        .. data:: is_kf
+
+           Boolean, if True the frame is a KeyFrame.
+
     **Constructor**:
 
         The constructor take as argument a camera calibration matrix :math:`K`.
@@ -96,6 +104,16 @@ class Camera(object):
         self.R = None
         self.t = None
         self.h = 1.65
+        self.index = None
+        self.is_kf = False
+
+    def set_index(self, index):
+        """ Sets the camera index
+
+        :param index: Camera index
+        :type index: Integer
+        """
+        self.index = index
 
     def set_K(self, K):
         """ Sets the calibration matrix
@@ -216,3 +234,9 @@ class Camera(object):
         :rtype: Float
         """
         return self.K[0, 0]
+
+    def is_keyframe(self):
+        """ Sets the Camera (frame) as a KeyFrame.
+
+        """
+        self.is_kf = True
