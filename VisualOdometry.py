@@ -7,6 +7,8 @@ import os
 from Matcher import Matcher
 from dataset import Dataset
 from Camera import Camera
+from Map import Map
+from MapPoint import MapPoint
 
 """
 .. codeauthor:: Cesar Gonzalez Gonzalez
@@ -97,6 +99,14 @@ class VisualOdometry(object):
 
                :py:mod:`Matcher`
 
+        .. data:: scene
+
+           Instance of the Map class. The scene as seen by the camera.
+
+           .. seealso::
+
+               :py:class:`Map.Map`
+
     **Constructor**:
 
         The constructor has two optional parameters:
@@ -140,6 +150,77 @@ class VisualOdometry(object):
         self.cam = Camera()
         self.E = None  # Essential matrix
         self.index = 0
+        self.scene = Map()
+
+    def init_reconstruction(self, optimize=True):
+        """ Performs the first steps of the reconstruction.
+
+        The first steps are:
+
+            1. Read the two first images and match them.
+            2. Get an initial estimate of the Fundamental matrix and reject
+               outliers.
+            3. Reestimate the Fundamental matrix without outliers.
+            4. Triangulate the image points up to a projective transformation.
+            5. Optimize the Fundamental matrix by minimizing the reprojection
+               error.
+            6. Triangulate the image points up to a scale factor.
+            7. Filter out the 3D points behind the camera and too far from it.
+            8. Init the map.
+
+        :param optimize: If True performs nonlinear optimization of :math:`F`
+        :type optimize: Boolean
+
+        """
+        # 1
+        self.kitti.read_image()
+        self.kitti.read_image()
+        self.matcher.match(self.kitti.image_1, self.kitti.image_2)
+        # 2
+        kp1 = self.matcher.kp_list_to_np(self.matcher.good_kp1)
+        kp2 = self.matcher.kp_list_to_np(self.matcher.good_kp2)
+        self.FindFundamentalRansac(kp1,
+                                   kp2,
+                                   'RANSAC')
+        self.reject_outliers()
+        kp1 = self.matcher.kp_list_to_np(self.matcher.good_kp1)
+        kp2 = self.matcher.kp_list_to_np(self.matcher.good_kp2)
+        # 3
+        self.FindFundamentalRansac(kp1,
+                                   kp2,
+                                   'RANSAC')
+        if optimize:
+            # 4
+            self.structure = self.triangulate(kp1, kp2)
+            # 5
+            sol, F = self.optimize_F(kp1, kp2, self.F, self.structure)
+            self.F = F
+        # 6
+        self.structure = self.triangulate(kp1, kp2, euclidean=True)
+        # 7
+        self.structure, mask = self.filter_z(self.structure)
+        kp1 = kp1[mask]
+        kp2 = kp2[mask]
+        desc1 = np.asarray(self.matcher.good_desc1)[mask]
+        desc2 = np.asarray(self.matcher.good_desc1)[mask]
+        # 8
+        cam1 = Camera()
+        cam1.set_index(self.index)
+        cam1.set_P(self.create_P1())
+        cam1.is_keyframe()
+        self.cam.set_index(self.index + 1)
+        # 9
+        for i in range(len(self.structure)):
+            descriptors = np.vstack((self.matcher.good_desc1[i],
+                                     self.matcher.good_desc2[i]))
+            points = np.vstack((kp1[i],
+                                kp2[i]))
+            self.scene.add_mappoint(MapPoint(self.structure[i, :],
+                                             [cam1, self.cam],
+                                             points,
+                                             descriptors))
+        self.scene.add_camera(cam1)
+        self.scene.add_camera(self.cam)
 
     def FindFundamentalRansac(self, kpts1, kpts2, method=cv2.FM_RANSAC, tol=1):
         """ Computes the Fundamental matrix from two set of KeyPoints, using
@@ -658,6 +739,12 @@ class VisualOdometry(object):
             possible that all the triangulated points are behind the camera, so
             don't care about this.
 
+        .. note::
+
+            The method sets the rotation matrix :math:`R` and translation
+            vector :math:`\\mathbf{t}` of the internal camera object (**which is
+            associated with the second frame**).
+
         The method normalize the calculated 3D points :math:`\\mathbf{X}`
         internally.
 
@@ -678,7 +765,7 @@ class VisualOdometry(object):
         """
         if np.shape(kpts1)[1] != 2:
             raise ValueError("The dimensions of the input image points must \
-                              be (2, n), where n is the number of points")
+                              be (n, 2), where n is the number of points")
         kpts1 = (np.reshape(kpts1, (len(kpts1), 2))).T
         kpts2 = (np.reshape(kpts2, (len(kpts2), 2))).T
         if F is None:
@@ -686,6 +773,8 @@ class VisualOdometry(object):
         if euclidean:
             E = self.E_from_F(F)
             R, t = self.get_pose(kpts1.T, kpts2.T, self.cam.K, E)
+            self.cam.set_R(R)
+            self.cam.set_t(t)
             P2 = self.cam.Rt2P(R, t, self.cam.K)
             P1 = np.dot(self.cam.K, self.create_P1())
         else:

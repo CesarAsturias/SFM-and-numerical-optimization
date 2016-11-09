@@ -166,19 +166,24 @@ class Dataset(object):
         count = len([name for name in os.listdir(path) if os.path.isfile(os.path.join(path, name))])
         return count
 
-    def crop_image(self, start, size, img):
+    def crop_image(self, start, size, img, center=False):
         """ Get a Region Of Interest (ROI).
 
         Since the images are stored as Numpy arrays we can crop them using the
         Numpy slicing methods.
 
-        :param start: Pixel coordinates of the starting position of the ROI
-        :param size: Height and width of the ROI (in pixels)
+        :param start: Pixel coordinates of the starting position of the ROI,
+                      :math:`(p_x, p_y)`
+        :param size: Height and width of the ROI (in pixels),
+                     :math:`(w, h)`
         :param img: Input image
+        :param center: If True, then use the start parameter as the center of
+                       the ROI.
         :type start: Numpy array 1x2
         :type size: Numpy array 1x2
         :type img: Numpy ndarray
-        :returns: The ROI
+        :type center: Boolean
+        :returns: The ROI or None if the ROI lies outside the image borders.
         :rtype: Numpy ndarray
 
         :Example:
@@ -193,9 +198,21 @@ class Dataset(object):
             >>> kitti.crop_image(start, size, kitti.image_2)
 
         """
-        roi = img[start[1, 0]:start[1, 0] + size[1, 0],
-                  start[0, 0]: start[0, 0] + size[0, 0]]
-        return roi
+        img = img.copy()
+        if center:
+            if (start[0] - size[0] / 2 < 0 or
+                start[0] + size[0] / 2 > self.image_2.shape[1]):
+                return None
+            elif (start[1] - size[1] / 2 < 0 or
+                  start[1] + size[1] / 2 > self.image_2.shape[0]):
+                return None
+            else:
+                return img[start[0] - size[0] / 2:start[0] + size[0] / 2,
+                           start[1] - size[1] / 2:start[1] + size[1] / 2]
+        else:
+            roi = img[start[0]:start[0] + size[0],
+                      start[1]: start[1] + size[1]]
+            return roi
 
     def read_ground_truth(self, filename):
         """ Reads the ground truth poses :math:`T` of the image sequence.
@@ -204,7 +221,7 @@ class Dataset(object):
 
         .. math::
 
-            row_i = (R_{11},R_{12},R_{13},t_{x},R_{21},R_{22},R_{23},t_{y},
+            T_i = (R_{11},R_{12},R_{13},t_{x},R_{21},R_{22},R_{23},t_{y},
                      R_{31},R_{32},R_{33},t_{z})
 
         where :math:`T_i` is the i-th row of the file.
