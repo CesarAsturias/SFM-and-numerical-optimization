@@ -59,6 +59,7 @@ def draw_epilines(vo):
 
 def plot_matches(vo):
     """ Plot the correspondences found in two images
+
     :param vo: Instance of the :py:class:`VisualOdometry.VisualOdometry` object.
     :type vo: :py:class:`VisualOdometry.VisualOdometry` object.
     """
@@ -70,6 +71,7 @@ def plot_matches(vo):
 
 def plot_scene(point_cloud):
     """ Plot a 3D point cloud (the scene)
+
     :param point_cloud: 3D point cloud, :math:`(X, Y, Z)`
     :type point_cloud: Numpy (n, 3) ndarray
     """

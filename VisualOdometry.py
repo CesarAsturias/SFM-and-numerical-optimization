@@ -202,17 +202,30 @@ class VisualOdometry(object):
         kp1 = kp1[mask]
         kp2 = kp2[mask]
         desc1 = np.asarray(self.matcher.good_desc1)[mask]
-        desc2 = np.asarray(self.matcher.good_desc1)[mask]
+        desc2 = np.asarray(self.matcher.good_desc2)[mask]
+        print ("Length of kp1: {}".format(len(kp1)))
+        print ("Length of kp2: {}".format(len(kp2)))
+        print ("Length of desc1: {}".format(len(self.matcher.good_desc1)))
+        print ("Length of desc2: {}".format(len(self.matcher.good_desc2)))
+        print ("Length of desc1: {}".format(len(desc1)))
+        print ("Length of desc2: {}".format(len(desc2)))
+        print ("Shape desc1: {}".format(np.shape(self.matcher.good_desc1[0])))
+        print ("Shape desc1: {}".format(np.shape(desc1[0])))
+        print ("Shape desc1: {}".format(np.shape(desc1)))
         # 8
         cam1 = Camera()
         cam1.set_index(self.index)
         cam1.set_P(self.create_P1())
         cam1.is_keyframe()
+        cam1.set_points(kp1)
+        cam1.set_descriptors(desc1)
         self.cam.set_index(self.index + 1)
+        self.cam.set_points(kp2)
+        self.cam.set_descriptors(desc2)
         # 9
         for i in range(len(self.structure)):
-            descriptors = np.vstack((self.matcher.good_desc1[i],
-                                     self.matcher.good_desc2[i]))
+            descriptors = np.vstack((desc1[i],
+                                     desc2[i]))
             points = np.vstack((kp1[i],
                                 kp2[i]))
             self.scene.add_mappoint(MapPoint(self.structure[i, :],
@@ -221,6 +234,34 @@ class VisualOdometry(object):
                                              descriptors))
         self.scene.add_camera(cam1)
         self.scene.add_camera(self.cam)
+        print ("Cam 2 descriptors: {}".format(self.scene.cameras[1].descriptors))
+
+    def track_local_map(self):
+        """ Tracks the local map.
+
+        This method use the *index* attribute to retrieve the local map points
+        and tries to track them in successive frames. The algorithm is as
+        follows:
+
+            1. Using the Lucas-Kanade algorithm track the local map points in
+               the new frame.
+            2. If the tracked map points are less than 50, then exit and
+               perform again the first step of the main algorithm.
+               (see :py:func:`VisualOdometry.VisualOdometry.init_reconstruction`)
+            3. If we have been tracking the local map for more than 10 frames
+               then exit this method and perform again the first step of the
+               main algorithm.
+            4. With the tracked map points estimate the Fundamental matrix, and
+               from F the motion of the camera.
+            5. Project non-tracked map points and look for a correspondence
+               in the new frame, within a image patch centered in
+               its coordinates.
+            6. Using the map points tracked in 1 and 5 reestimate the
+               Fundamental matrix.
+            7. Perform bundle adjustment (motion only) using the tracked map
+               points.
+
+        """
 
     def FindFundamentalRansac(self, kpts1, kpts2, method=cv2.FM_RANSAC, tol=1):
         """ Computes the Fundamental matrix from two set of KeyPoints, using

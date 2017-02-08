@@ -72,13 +72,13 @@ class Camera(object):
            All the ORB features extracted in the frame, associated or not to a
            map point.
 
-           **Type:** List of KeyPoint objects.
+           **Type:** Numpy  ndarray
 
         .. data:: descriptors
 
            All the descriptors extracted for the KeyPoints in the frame.
 
-           **Type**: List of descriptors (numpy ndarrays)
+           **Type**: Numpy ndarray
 
         .. data:: index
 
@@ -106,6 +106,24 @@ class Camera(object):
         self.h = 1.65
         self.index = None
         self.is_kf = False
+        self.descriptors = None
+        self.points = None
+
+    def set_descriptors(self, desc):
+        """ Adds the descriptors to the frame
+
+        :param desc: list of descriptors (list of numpy ndarrays)
+        :type desc: List
+        """
+        self.descriptors = desc
+
+    def set_points(self, points):
+        """ Adds the points to the frame
+
+        :param points: List of numpy ndarrays
+        :type points: List
+        """
+        self.points = points
 
     def set_index(self, index):
         """ Sets the camera index
