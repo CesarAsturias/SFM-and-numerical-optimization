@@ -197,7 +197,7 @@ class Camera(object):
             x[i] /= x[2]
         return x
 
-    def Rt2P(self, R, t, K):
+    def Rt2P(self, R=None, t=None, K=None, inplace=False):
         """ Compute the camera projection matrix P given the extrinsic
         parameters R and t using:
 
@@ -208,15 +208,27 @@ class Camera(object):
         :param R: Rotation matrix
         :param t: Translation vector
         :param K: Calibration matrix
+        :param inplace: If True result is set as self P matrix. Otherwise the result
+                        is returned as numpy ndarray.
         :type R: Numpy 3x3 ndarray
         :type t: Numpy 1x3 ndarray
         :type K: Numpy 3x3 ndarray
+        :type inplace: Boolean
 
         :returns: The camera projection matrix associated with R and t
         :rtype: Numpy 3x4 ndarray
         """
+        if R is None:
+            R = self.R
+        if t is None:
+            t = self.t
+        if K is None:
+            K = self.K
         pose = np.column_stack((R, t))
-        return np.dot(K, pose)
+        if inplace:
+            self.P = np.dot(K, pose)
+        else:
+            return np.dot(K, pose)
 
     def get_pp(self):
         """ Returns the principal point of the camera

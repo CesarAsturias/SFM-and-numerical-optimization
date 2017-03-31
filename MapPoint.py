@@ -236,21 +236,38 @@ class MapPoint(object):
                 np.vstack((proj_points, cam.project(self.x_w)))
         return proj_points
 
-    def project_point(self, index):
+    def project_point(self, index, camera=None):
         """ Projects the MapPoint into a camera frame indexed by index.
 
         :param index: Camera index
+        :param camera: If not None, then project using this Camera
         :type index: Integer
+        :type camera: :py:mod:`Camera.Camera` object
         :returns: * Image coordinates of the MapPoint **if the point has been
                     observed in the camera**.
                   * None if the point hasn't been observed in that particular
                     camera.
         :rtype: Numpy (3, ) ndarray
+
+        :todo: This method should have the ability to project
+               a map point in a frame other than the ones in 
+               which it has been observed, in order to perform
+               tracking. Maybe using additional arguments (camera argument)
+               and if camera is None then use this camera to project the 
+               point.
         """
-        if index in self.index:
-            return self.connected_frames[index].project(self.x_w)
+
+        if camera is None:
+            if index in self.index:
+                print ("Index: {}".format(index))
+                return self.connected_frames[index].project(self.x_w)
+            elif camera is None:
+                print ("Index: {}".format(index))
+                print ("Point index: {}".format(self.index))
+                return None
         else:
-            return None
+            return camera.project(self.x_w)
+        
 
     def ret_if_seen(self, camera_index):
         """ Return the MapPoint if it was observed in the camera indexed by

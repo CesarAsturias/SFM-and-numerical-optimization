@@ -111,7 +111,7 @@ class Map(object):
         :returns: The five previous KeyFrames
         :rtype: List of indices (integers).
         """
-        cameras = self.cameras[:id]
+        cameras = self.cameras[:id + 1]
         local_map = [camera.index for camera in cameras if camera.is_kf]
         if len(local_map) < 5:
             return local_map
@@ -128,9 +128,14 @@ class Map(object):
         :rtype: Numpy nx3 ndarray, where :math:`n` is the number of 3D points
                 projected.
         """
+        camera = self.cameras[index]
         pts, cams = self.ret_local_map(index)
-        pt = pts[0].project_point(index)
+        print (pts[:5])
+        print ("Number of map points: {}".format(len(pts)))
+        print (cams)
+        pt = pts[0].project_point(index, camera=camera)
+        print (pt)
         for point in pts:
-            pt = np.vstack((pt, point.project_point(index)))
+            pt = np.vstack((pt, point.project_point(index, camera=camera)))
         pt = np.delete(pt, (0), axis=0)
         return pt

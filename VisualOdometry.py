@@ -203,20 +203,11 @@ class VisualOdometry(object):
         kp2 = kp2[mask]
         desc1 = np.asarray(self.matcher.good_desc1)[mask]
         desc2 = np.asarray(self.matcher.good_desc2)[mask]
-        print ("Length of kp1: {}".format(len(kp1)))
-        print ("Length of kp2: {}".format(len(kp2)))
-        print ("Length of desc1: {}".format(len(self.matcher.good_desc1)))
-        print ("Length of desc2: {}".format(len(self.matcher.good_desc2)))
-        print ("Length of desc1: {}".format(len(desc1)))
-        print ("Length of desc2: {}".format(len(desc2)))
-        print ("Shape desc1: {}".format(np.shape(self.matcher.good_desc1[0])))
-        print ("Shape desc1: {}".format(np.shape(desc1[0])))
-        print ("Shape desc1: {}".format(np.shape(desc1)))
         # 8
         cam1 = Camera()
         cam1.set_index(self.index)
         cam1.set_P(self.create_P1())
-        cam1.is_keyframe()
+        # cam1.is_keyframe()
         cam1.set_points(kp1)
         cam1.set_descriptors(desc1)
         self.cam.set_index(self.index + 1)
@@ -234,7 +225,8 @@ class VisualOdometry(object):
                                              descriptors))
         self.scene.add_camera(cam1)
         self.scene.add_camera(self.cam)
-        print ("Cam 2 descriptors: {}".format(self.scene.cameras[1].descriptors))
+        self.cam.is_keyframe()
+        self.index += 1
 
     def track_local_map(self):
         """ Tracks the local map.
@@ -262,6 +254,29 @@ class VisualOdometry(object):
                points.
 
         """
+        self.kitti.read_image()
+        previous_image = self.kitti.image_1.copy()
+        points = self.cam.points
+        for i in range(4):
+            # 1
+            mask, lk_prev_points, lk_next_points = self.matcher.lktracker(previous_image,
+                                                                          self.kitti.image_2,
+                                                                          points)
+            print ("Tracked points: {}".format(len(lk_next_points)))
+            # 2
+            F = self.FindFundamentalRansac(lk_next_points, points[mask])
+            E = self.E_from_F(F)
+            pts1 = (np.reshape(points[mask], (len(points[mask]), 2))).T
+            pts2 = (np.reshape(lk_next_points, (len(lk_next_points), 2))).T
+            R, t = self.get_pose(pts1.T, pts2.T,
+                                 self.cam.K, E)
+            cam = Camera()
+            cam.set_R(R)
+            cam.set_t(t)
+            cam.Rt2P(inplace=True)
+            self.scene.add_camera(cam)
+            self.kitti.read_image()
+        return mask, lk_prev_points, lk_next_points
 
     def FindFundamentalRansac(self, kpts1, kpts2, method=cv2.FM_RANSAC, tol=1):
         """ Computes the Fundamental matrix from two set of KeyPoints, using
@@ -314,6 +329,7 @@ class VisualOdometry(object):
                                                            tol)
                 return self.F
             except Exception, e:
+                print "Exception"
                 print e
         else:
             try:
@@ -807,6 +823,9 @@ class VisualOdometry(object):
         if np.shape(kpts1)[1] != 2:
             raise ValueError("The dimensions of the input image points must \
                               be (n, 2), where n is the number of points")
+        print ("Shape needed for recoverpose: {}".format(np.shape(kpts1)))
+        print ("Type needed for recoverpose: {}".format(type(kpts1)))
+        print ("Type: {}".format(type(kpts1[0][0])))
         kpts1 = (np.reshape(kpts1, (len(kpts1), 2))).T
         kpts2 = (np.reshape(kpts2, (len(kpts2), 2))).T
         if F is None:
@@ -1231,6 +1250,8 @@ class VisualOdometry(object):
         t = np.zeros([3, 1])
         pp = tuple(camera_matrix[:2, 2])
         f = camera_matrix[0, 0]
+        pts1 = pts1.astype(np.float64)
+        pts2 = pts2.astype(np.float64)
         cv2.recoverPose(E, pts2, pts1, R, t, f, pp)
         if inplace:
             self.cam.set_R(R)
