@@ -52,6 +52,15 @@ class MapPoint(object):
 
            List of camera indices. This is an **unordered list**.
 
+        .. data:: properties
+
+           Dictionary with the following keys:
+
+                * octave: octave (pyramid layer) from which the keypoint has been extracted
+                * angle: computed orientation of the keypoint (-1 if not applicable); it's 
+                  in [0,360) degrees and measured relative to image coordinate system, ie in clockwise.
+                * diameter: diameter of the meaningful keypoint neighborhood
+
     **Constructor**:
 
         The constructor can take 4 optional arguments:
@@ -67,12 +76,21 @@ class MapPoint(object):
                point.
 
     """
-    def __init__(self, coord=None, frame=None, img_point=None, desc=None):
+    def __init__(self, coord=None, frame=None, img_point=None, desc=None, properties=None):
         """ Constructor
 
         """
         self.connected_frames = []
+        
         self.index = None
+        if properties is not None:
+            self.octave = properties['octave']
+            self.angle = properties['angle']
+            self.diameter = properties['diameter']
+        else:
+            self.octave = None
+            self.angle = None
+            self.diameter = None
         if coord is not None:
             self.x_w = coord
         else:

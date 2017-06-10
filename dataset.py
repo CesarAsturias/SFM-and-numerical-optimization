@@ -202,13 +202,21 @@ class Dataset(object):
         if center:
             if (start[0] - size[0] / 2 < 0 or
                 start[0] + size[0] / 2 > self.image_2.shape[1]):
+                print ("X coordinates not in image")
                 return None
             elif (start[1] - size[1] / 2 < 0 or
                   start[1] + size[1] / 2 > self.image_2.shape[0]):
+                print ("Y coordinates not in image")
                 return None
             else:
-                return img[start[0] - size[0] / 2:start[0] + size[0] / 2,
-                           start[1] - size[1] / 2:start[1] + size[1] / 2]
+                val = int(round(size[0] / 2))
+                x_init = int(start[0] - val)
+                x_end = int(start[0] + val)
+                val = int(round(size[1] / 2))
+                y_init = int(start[1] - val)
+                y_end = int(start[1] + val)
+                return img[y_init:y_end,x_init:x_end]
+                
         else:
             roi = img[start[0]:start[0] + size[0],
                       start[1]: start[1] + size[1]]
