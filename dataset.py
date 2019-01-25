@@ -285,13 +285,13 @@ class Dataset(object):
         """ Destroy all windows before exiting the application
 
         """
-        print "Bye..."
+        print ("Bye...")
         cv2.destroyAllWindows()
 
 
 def main(args):
     kitti = Dataset('/home/cesar/Documentos/Computer_Vision/01/image_0')
-    print kitti.count_images(kitti.path)
+    print (kitti.count_images(kitti.path))
     kitti.read_image()
     kitti.show_image()
     kitti.read_image()

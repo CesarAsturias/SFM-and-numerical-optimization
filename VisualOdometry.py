@@ -328,17 +328,19 @@ class VisualOdometry(object):
                                                            algorithms[method],
                                                            tol)
                 return self.F
-            except Exception, e:
-                print "Exception"
-                print e
+            except Exception as e:
+                print(type(e))  # The exception instance
+                print(e)   # Exception string
+                
         else:
             try:
                 self.F, self.mask = cv2.findFundamentalMat(kpts2,
                                                            kpts1,
                                                            algorithms[method])
                 return self.F
-            except Exception, e:
-                print e
+            except Exception as e:
+                print(type(e))  # The exception instance
+                print(e)   # Exception string
 
     def reject_outliers(self):
         """ Rejects the KeyPoints outliers.
@@ -652,7 +654,7 @@ class VisualOdometry(object):
         kpts1 = (np.reshape(new_points1, (len(kpts1), 2))).T
         kpts2 = (np.reshape(new_points2, (len(kpts2), 2))).T
 
-        print np.shape(kpts1)
+        #print(np.shape(kpts1))
 
         points3D = cv2.triangulatePoints(self.cam1.P, self.cam2.P, kpts2, kpts1)
 
@@ -926,7 +928,7 @@ class VisualOdometry(object):
 
     def convert_array2d(self, kpts):
 
-        print len(kpts[:, 0])
+        #print(len(kpts[:, 0]))
 
         a = np.zeros((len(kpts[:, 0]), 2))
 
