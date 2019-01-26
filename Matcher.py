@@ -508,6 +508,8 @@ class Matcher(object):
 
         """
 
+        # TODO: Ensure int type for arrowedLine method
+
         color_dict = dict(blue=(255, 0, 0),
                           green=(0, 255, 0),
                           red=(0, 0, 255))
