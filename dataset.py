@@ -93,7 +93,7 @@ class Dataset(object):
         .. _Kitti: http://www.cvlibs.net/datasets/kitti/
 
         """
-        if self.image_id < 9 or self.image_id == 0:
+        if self.image_id <= 9 or self.image_id == 0:
             number_image = '00000' + str(self.image_id)
         elif self.image_id < 100 and self.image_id > 9:
             number_image = '0000' + str(self.image_id)
@@ -107,6 +107,7 @@ class Dataset(object):
             number_image = str(self.image_id)
 
         file_name = self.path + '/' + number_image + '.png'
+        # print("New image: {}".format(file_name))
 
         # Now, read the image
         # If we are loading the first image of the dataset we will store it
