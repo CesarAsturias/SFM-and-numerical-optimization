@@ -138,6 +138,11 @@ class Matcher(object):
            List of Numpy ndarrays corresponding to the filtered descriptors
            for the image 2 (the last one)
 
+        .. data: feature
+
+           Identifies the type of the features that are going to be used: orb,
+           sift or surf (string)
+
 
     **Constructor**:
 
@@ -199,12 +204,15 @@ class Matcher(object):
     def __init__(self, parameters):
         # Initiate detector and matcher
         if parameters['detector'] == 'orb':
+            self.feature = 'orb'
             self.detector = cv2.ORB_create(2000)
             self.norm = cv2.NORM_HAMMING
         elif parameters['detector'] == 'surf':
+            self.feature = 'surf'
             self.detector = cv2.xfeatures2d.SURF_create(2000)
             self.norm = cv2.NORM_L2
         elif parameters['detector'] == 'sift':
+            self.feature = 'sift'
             self.detector = cv2.xfeatures2d.SIFT_create()
             self.norm = cv2.NORM_L2
         else:
@@ -347,24 +355,30 @@ class Matcher(object):
         sel_matches = []
         thres_dist = 0
         temp_matches = []
+        near_matches = []
 
-        for i in range(0, len(matches) - 1):
+        if self.feature == 'orb' or self.feature == 'surf':
             # We keep only those match objects with two matches:
-            if (len(matches[i])) == 2:
-                # If there are two matches:
-                for j in range(0, 2):
-                    dist.append(matches[i][j].distance)
-                temp_matches.append(matches[i])
+            temp_matches = [m for m in matches if (len(m)) == 2]
+            dist = [match.distance for m in temp_matches for match in m]
 
-        # Now, calculate the threshold:
-        if dist:
-            thres_dist = (sum(dist) / len(dist)) * self.ratio
-        else:
-            return None
-        # Keep only reasonable matches based on the threshold distance:
-        for i in range(0, len(temp_matches)):
-            if (temp_matches[i][0].distance / temp_matches[i][1].distance) < thres_dist:
-                sel_matches.append(temp_matches[i])
+            # Now, calculate the threshold:
+            if dist:
+                thres_dist = (sum(dist) / len(dist)) * self.ratio
+            else:
+                return None
+            # Keep only reasonable matches based on the threshold distance:
+            near_matches = [t for t in temp_matches
+                            if t[0].distance / t[1].distance < thres_dist]
+            # Sort them in the order of their distance
+            near_matches = sorted(near_matches,
+                                  key=lambda x:np.minimum(x[1].distance,
+                                                          x[0].distance))
+            sel_matches = near_matches
+        else: # SIFT
+            # Ratio test as per Lowe's paper
+            sel_matches = [m for m in matches
+                           if m[0].distance < (self.ratio+0.1) * m[1].distance] 
         return sel_matches
 
     def filter_asymmetric(self, matches1, matches2):
