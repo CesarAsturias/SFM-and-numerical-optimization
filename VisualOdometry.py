@@ -219,10 +219,14 @@ class VisualOdometry(object):
                                      desc2[i]))
             points = np.vstack((kp1[i],
                                 kp2[i]))
+            kp_properties = {'octave': self.matcher.good_kp2[i].octave,
+                             'angle': self.matcher.good_kp2[i].angle,
+                             'diameter': self.matcher.good_kp2[i].size}
             self.scene.add_mappoint(MapPoint(self.structure[i, :],
                                              [cam1, self.cam],
                                              points,
-                                             descriptors))
+                                             descriptors,
+                                             properties=kp_properties))
         self.scene.add_camera(cam1)
         self.scene.add_camera(self.cam)
         self.cam.is_keyframe()
@@ -264,6 +268,8 @@ class VisualOdometry(object):
                                                                           points)
             print ("Tracked points: {}".format(len(lk_next_points)))
             # 2
+            # 3
+            # 4
             F = self.FindFundamentalRansac(lk_next_points, points[mask])
             E = self.E_from_F(F)
             pts1 = (np.reshape(points[mask], (len(points[mask]), 2))).T
@@ -274,7 +280,18 @@ class VisualOdometry(object):
             cam.set_R(R)
             cam.set_t(t)
             cam.Rt2P(inplace=True)
+            # 5
             self.scene.add_camera(cam)
+            projected_map = self.scene.project_local_map(self.index + 1)
+            mask = ((projected_map[:, 0] > 0) & (projected_map[:, 0] < 1230) & (projected_map[:, 1] > 0) & (projected_map[:, 1] < 360))
+            for point in projected_map[mask]:
+                start = np.array([point[0], point[1]])
+                size = np.array([100, 50])
+                roi = self.kitti.crop_image(start, size,
+                                            self.kitti.image_2,
+                                            center=True)
+            print ("ROI: {}".format(roi))
+            
             self.kitti.read_image()
         return mask, lk_prev_points, lk_next_points
 
